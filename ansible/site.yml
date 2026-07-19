@@ -1,0 +1,8 @@
+---
+- name: Configure TaskFlow app servers
+  hosts: role_webserver
+  become: true
+  roles:
+    - common-hardening
+    - webserver
+    - app-deploy

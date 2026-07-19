@@ -1,0 +1,15 @@
+---
+# Placeholder for Phase 2. The real container-based deploy lands in
+# Phase 5 (Docker build/push) and Phase 6 (k3s). This proves the role
+# structure now so nothing has to be restructured later.
+- name: Create app directory
+  ansible.builtin.file:
+    path: /opt/taskflow
+    state: directory
+    mode: '0755'
+
+- name: Drop a version marker
+  ansible.builtin.copy:
+    content: "app-deploy role scaffolded in Phase 2 - real deploy arrives Phase 5/6\n"
+    dest: /opt/taskflow/VERSION
+    mode: '0644'
