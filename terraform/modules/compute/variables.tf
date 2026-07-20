@@ -20,8 +20,12 @@ variable "project" {
 }
 
 variable "instance_type" {
-  ssh_public_key_placeholder = true
-  description                = "Must be on the account's free-tier-eligible list: t3.micro, t3.small, t4g.micro, t4g.small"
-  type                       = string
-  default                    = "t3.micro"
+  description = "Must be on the account's free-tier-eligible list: t3.micro, t3.small, t4g.micro, t4g.small"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "ssh_public_key" {
+  description = "SSH public key auto-injected into ec2-user's authorized_keys at launch"
+  type        = string
 }
