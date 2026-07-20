@@ -12,17 +12,17 @@ module "network" {
 module "compute" {
   source = "../../modules/compute"
 
-  vpc_id             = module.network.vpc_id
-  private_subnet_ids = module.network.private_subnet_ids
-  security_group_id  = module.network.private_instances_sg_id
-  environment        = var.environment
-  project            = "taskflow"
+  vpc_id              = module.network.vpc_id
+  private_subnet_ids  = module.network.private_subnet_ids
+  security_group_id   = module.network.private_instances_sg_id
+  environment         = var.environment
+  project             = "taskflow"
   alarm_sns_topic_arn = module.secrets.ops_alerts_topic_arn
 }
 
 module "secrets" {
   alert_email = "sunilvajja12oct@gmail.com"
-  source = "../../modules/secrets"
+  source      = "../../modules/secrets"
 
   environment = var.environment
   project     = "taskflow"

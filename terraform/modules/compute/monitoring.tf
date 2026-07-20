@@ -6,7 +6,7 @@ variable "alarm_sns_topic_arn" {
 resource "aws_cloudwatch_metric_alarm" "instance_status_check" {
   alarm_name          = "${var.project}-${var.environment}-app-status-check-failed"
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods   = 2
+  evaluation_periods  = 2
   metric_name         = "StatusCheckFailed"
   namespace           = "AWS/EC2"
   period              = 60
