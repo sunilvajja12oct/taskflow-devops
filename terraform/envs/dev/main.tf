@@ -10,9 +10,9 @@ module "network" {
 }
 
 module "compute" {
-  instance_type       = "t3.small"
-  ssh_public_key      = file(pathexpand("~/.ssh/taskflow-ansible.pub"))
-  source = "../../modules/compute"
+  instance_type  = "t3.small"
+  ssh_public_key = file(pathexpand("~/.ssh/taskflow-ansible.pub"))
+  source         = "../../modules/compute"
 
   vpc_id              = module.network.vpc_id
   private_subnet_ids  = module.network.private_subnet_ids
