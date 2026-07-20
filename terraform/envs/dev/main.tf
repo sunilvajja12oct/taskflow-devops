@@ -17,4 +17,24 @@ module "compute" {
   security_group_id  = module.network.private_instances_sg_id
   environment        = var.environment
   project            = "taskflow"
+  alarm_sns_topic_arn = module.secrets.ops_alerts_topic_arn
+}
+
+module "secrets" {
+  alert_email = "sunilvajja12oct@gmail.com"
+  source = "../../modules/secrets"
+
+  environment = var.environment
+  project     = "taskflow"
+}
+
+module "registry" {
+  source      = "../../modules/registry"
+  environment = var.environment
+}
+
+module "cicd" {
+  source      = "../../modules/cicd"
+  environment = var.environment
+  github_repo = "sunilvajja12oct/taskflow-devops"
 }

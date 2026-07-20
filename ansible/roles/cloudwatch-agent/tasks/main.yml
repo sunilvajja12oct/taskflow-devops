@@ -1,0 +1,24 @@
+---
+- name: Install amazon-cloudwatch-agent
+  ansible.builtin.dnf:
+    name: amazon-cloudwatch-agent
+    state: present
+
+- name: Deploy agent config
+  ansible.builtin.template:
+    src: cw-agent-config.json.j2
+    dest: /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+    mode: '0644'
+  notify: Restart cloudwatch agent
+
+- name: Start agent with the config
+  ansible.builtin.command: >
+    /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
+    -a fetch-config -m ec2 -s
+    -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+  changed_when: false
+
+- name: Enable agent on boot
+  ansible.builtin.systemd:
+    name: amazon-cloudwatch-agent
+    enabled: true

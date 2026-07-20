@@ -4,5 +4,7 @@
   become: true
   roles:
     - common-hardening
+    - cloudwatch-agent
     - webserver
     - app-deploy
+    - k3s

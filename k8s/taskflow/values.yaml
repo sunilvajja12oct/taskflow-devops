@@ -1,0 +1,13 @@
+image:
+  repository: 348425779594.dkr.ecr.us-east-1.amazonaws.com/taskflow-dev
+  tag: v1.0.1-25ce95c
+replicaCount: 2
+service:
+  port: 80
+  targetPort: 3000
+ingress:
+  host: taskflow.local
+hpa:
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70

@@ -1,0 +1,28 @@
+{
+  "metrics": {
+    "namespace": "TaskFlow/{{ environment | default('dev') }}",
+    "metrics_collected": {
+      "cpu": { "measurement": ["cpu_usage_active"], "totalcpu": true },
+      "mem": { "measurement": ["mem_used_percent"] },
+      "disk": { "measurement": ["used_percent"], "resources": ["/"] }
+    }
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/nginx/access.log",
+            "log_group_name": "/taskflow/nginx/access",
+            "log_stream_name": "{instance_id}"
+          },
+          {
+            "file_path": "/var/log/nginx/error.log",
+            "log_group_name": "/taskflow/nginx/error",
+            "log_stream_name": "{instance_id}"
+          }
+        ]
+      }
+    }
+  }
+}

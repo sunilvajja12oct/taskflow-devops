@@ -1,7 +1,4 @@
 ---
-# Placeholder for Phase 2. The real container-based deploy lands in
-# Phase 5 (Docker build/push) and Phase 6 (k3s). This proves the role
-# structure now so nothing has to be restructured later.
 - name: Create app directory
   ansible.builtin.file:
     path: /opt/taskflow
@@ -10,6 +7,12 @@
 
 - name: Drop a version marker
   ansible.builtin.copy:
-    content: "app-deploy role scaffolded in Phase 2 - real deploy arrives Phase 5/6\n"
+    content: "app-deploy role - real deploy via Helm, Phase 6\n"
     dest: /opt/taskflow/VERSION
     mode: '0644'
+
+- name: Copy Helm chart to the node
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../k8s/taskflow"
+    dest: /home/ec2-user/taskflow-chart
+    mode: '0755'

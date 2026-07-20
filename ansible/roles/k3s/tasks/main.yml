@@ -1,0 +1,43 @@
+---
+- name: Stop and disable nginx (app now served via k8s ingress)
+  ansible.builtin.systemd:
+    name: nginx
+    state: stopped
+    enabled: false
+
+- name: Check if k3s already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_bin
+
+- name: Install k3s
+  ansible.builtin.shell: curl -sfL https://get.k3s.io | sh -
+  when: not k3s_bin.stat.exists
+
+- name: Wait for node Ready
+  ansible.builtin.shell: k3s kubectl get nodes | grep -q Ready
+  register: k3s_ready
+  until: k3s_ready.rc == 0
+  retries: 15
+  delay: 10
+  changed_when: false
+
+- name: Install metrics-server (needed for HPA)
+  ansible.builtin.shell: k3s kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+  changed_when: true
+
+- name: Patch metrics-server for k3s self-signed kubelet certs
+  ansible.builtin.shell: >
+    k3s kubectl patch deployment metrics-server -n kube-system --type=json
+    -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+  failed_when: false
+  changed_when: false
+
+- name: Check if helm already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/helm
+  register: helm_bin
+
+- name: Install helm
+  ansible.builtin.shell: curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  when: not helm_bin.stat.exists

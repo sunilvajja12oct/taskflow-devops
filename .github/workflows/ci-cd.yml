@@ -1,0 +1,161 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: 348425779594.dkr.ecr.us-east-1.amazonaws.com/taskflow-dev
+  INSTANCE_ID: i-0b8b7bede99072296
+
+jobs:
+  lint-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: terraform fmt check
+        run: terraform -chdir=terraform/envs/dev fmt -check -recursive
+      - name: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+
+  terraform-plan:
+    needs: lint-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+      - name: terraform init
+        working-directory: terraform/envs/dev
+        run: terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+      - name: terraform plan
+        working-directory: terraform/envs/dev
+        run: terraform plan -var-file=dev.tfvars -no-color -out=tfplan | tee plan_output.txt
+      - name: Post plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/envs/dev/plan_output.txt', 'utf8').slice(0, 60000);
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### Terraform Plan\n\`\`\`\n${plan}\n\`\`\``
+            });
+
+  apply:
+    needs: terraform-plan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+      - name: terraform apply
+        working-directory: terraform/envs/dev
+        run: |
+          terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+          terraform apply -var-file=dev.tfvars -auto-approve
+
+  build-scan-push:
+    needs: apply
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - id: tag
+        run: echo "tag=v1.0.${{ github.run_number }}-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      - name: Build image
+        working-directory: app
+        run: docker build -t taskflow:${{ steps.tag.outputs.tag }} .
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: taskflow:${{ steps.tag.outputs.tag }}
+          severity: CRITICAL,HIGH
+          exit-code: 0
+      - name: Push to ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
+          docker tag taskflow:${{ steps.tag.outputs.tag }} $ECR_REPO:${{ steps.tag.outputs.tag }}
+          docker push $ECR_REPO:${{ steps.tag.outputs.tag }}
+
+  deploy:
+    needs: build-scan-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Deploy via SSM
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids $INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[\"export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && cd ~/taskflow-chart && helm upgrade --install taskflow . --set image.tag=${{ needs.build-scan-push.outputs.image_tag }}\"]" \
+            --region $AWS_REGION --query "Command.CommandId" --output text)
+          sleep 20
+          aws ssm get-command-invocation --instance-id $INSTANCE_ID --command-id $CMD_ID --region $AWS_REGION
+
+  smoke-test:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Health check via SSM
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids $INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["curl -sf -H \"Host: taskflow.local\" http://localhost/health"]' \
+            --region $AWS_REGION --query "Command.CommandId" --output text)
+          sleep 10
+          aws ssm get-command-invocation --instance-id $INSTANCE_ID --command-id $CMD_ID --region $AWS_REGION --query "Status"
+
+  notify:
+    needs: [smoke-test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Notify via SNS
+        run: |
+          STATUS="${{ needs.smoke-test.result }}"
+          aws sns publish --topic-arn ${{ secrets.OPS_ALERTS_TOPIC_ARN }} \
+            --subject "TaskFlow deploy: $STATUS" \
+            --message "Pipeline run ${{ github.run_number }} finished with status: $STATUS" \
+            --region $AWS_REGION
