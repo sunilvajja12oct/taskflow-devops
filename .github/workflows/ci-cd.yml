@@ -101,6 +101,8 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
       - name: terraform apply
         working-directory: terraform/envs/dev
+        env:
+          TF_VAR_ssh_public_key_override: ${{ secrets.SSH_PUBLIC_KEY }}
         run: |
           terraform init -backend-config="bucket=${{ needs.resolve.outputs.state_bucket }}"
           terraform apply -var-file=dev.tfvars -auto-approve

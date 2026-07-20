@@ -11,3 +11,9 @@ variable "owner" {
   type        = string
   default     = "sunil"
 }
+
+variable "ssh_public_key_override" {
+  description = "Set via TF_VAR_ssh_public_key_override in CI. Empty locally, falls back to reading your local key file."
+  type        = string
+  default     = ""
+}
