@@ -13,11 +13,36 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPO: 348425779594.dkr.ecr.us-east-1.amazonaws.com/taskflow-dev
-  INSTANCE_ID: i-0b8b7bede99072296
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      account_id: ${{ steps.resolve.outputs.account_id }}
+      ecr_repo: ${{ steps.resolve.outputs.ecr_repo }}
+      state_bucket: ${{ steps.resolve.outputs.state_bucket }}
+      instance_id: ${{ steps.resolve.outputs.instance_id }}
+      ops_topic_arn: ${{ steps.resolve.outputs.ops_topic_arn }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Resolve everything dynamically - no hardcoded IDs anywhere else in this file
+        id: resolve
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+          echo "ecr_repo=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/taskflow-dev" >> $GITHUB_OUTPUT
+          echo "state_bucket=taskflow-tfstate-$ACCOUNT_ID" >> $GITHUB_OUTPUT
+          echo "ops_topic_arn=arn:aws:sns:$AWS_REGION:$ACCOUNT_ID:taskflow-dev-ops-alerts" >> $GITHUB_OUTPUT
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=taskflow-dev-app-01" "Name=instance-state-name,Values=running" \
+            --region $AWS_REGION --query "Reservations[].Instances[].InstanceId" --output text)
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+
   lint-scan:
+    needs: resolve
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +58,7 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
 
   terraform-plan:
-    needs: lint-scan
+    needs: [resolve, lint-scan]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +69,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
       - name: terraform init
         working-directory: terraform/envs/dev
-        run: terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+        run: terraform init -backend-config="bucket=${{ needs.resolve.outputs.state_bucket }}"
       - name: terraform plan
         working-directory: terraform/envs/dev
         run: terraform plan -var-file=dev.tfvars -no-color -out=tfplan | tee plan_output.txt
@@ -63,7 +88,7 @@ jobs:
             });
 
   apply:
-    needs: terraform-plan
+    needs: [resolve, terraform-plan]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: production
@@ -77,11 +102,11 @@ jobs:
       - name: terraform apply
         working-directory: terraform/envs/dev
         run: |
-          terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+          terraform init -backend-config="bucket=${{ needs.resolve.outputs.state_bucket }}"
           terraform apply -var-file=dev.tfvars -auto-approve
 
   build-scan-push:
-    needs: apply
+    needs: [resolve, apply]
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.tag.outputs.tag }}
@@ -103,13 +128,15 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: 0
       - name: Push to ECR
+        env:
+          ECR_REPO: ${{ needs.resolve.outputs.ecr_repo }}
         run: |
           aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
           docker tag taskflow:${{ steps.tag.outputs.tag }} $ECR_REPO:${{ steps.tag.outputs.tag }}
           docker push $ECR_REPO:${{ steps.tag.outputs.tag }}
 
   deploy:
-    needs: build-scan-push
+    needs: [resolve, build-scan-push]
     runs-on: ubuntu-latest
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
@@ -117,17 +144,20 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
       - name: Deploy via SSM
+        env:
+          INSTANCE_ID: ${{ needs.resolve.outputs.instance_id }}
+          ECR_REPO: ${{ needs.resolve.outputs.ecr_repo }}
         run: |
           CMD_ID=$(aws ssm send-command \
             --instance-ids $INSTANCE_ID \
             --document-name "AWS-RunShellScript" \
-            --parameters "commands=[\"export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && cd ~/taskflow-chart && helm upgrade --install taskflow . --set image.tag=${{ needs.build-scan-push.outputs.image_tag }}\"]" \
+            --parameters "commands=[\"export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && cd ~/taskflow-chart && helm upgrade --install taskflow . --set image.repository=$ECR_REPO --set image.tag=${{ needs.build-scan-push.outputs.image_tag }}\"]" \
             --region $AWS_REGION --query "Command.CommandId" --output text)
           sleep 20
           aws ssm get-command-invocation --instance-id $INSTANCE_ID --command-id $CMD_ID --region $AWS_REGION
 
   smoke-test:
-    needs: deploy
+    needs: [resolve, deploy]
     runs-on: ubuntu-latest
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
@@ -135,6 +165,8 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
       - name: Health check via SSM
+        env:
+          INSTANCE_ID: ${{ needs.resolve.outputs.instance_id }}
         run: |
           CMD_ID=$(aws ssm send-command \
             --instance-ids $INSTANCE_ID \
@@ -145,7 +177,7 @@ jobs:
           aws ssm get-command-invocation --instance-id $INSTANCE_ID --command-id $CMD_ID --region $AWS_REGION --query "Status"
 
   notify:
-    needs: [smoke-test]
+    needs: [resolve, smoke-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -156,7 +188,7 @@ jobs:
       - name: Notify via SNS
         run: |
           STATUS="${{ needs.smoke-test.result }}"
-          aws sns publish --topic-arn ${{ secrets.OPS_ALERTS_TOPIC_ARN }} \
+          aws sns publish --topic-arn ${{ needs.resolve.outputs.ops_topic_arn }} \
             --subject "TaskFlow deploy: $STATUS" \
             --message "Pipeline run ${{ github.run_number }} finished with status: $STATUS" \
             --region $AWS_REGION

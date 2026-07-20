@@ -45,6 +45,15 @@ resource "aws_instance" "app" {
     http_tokens = "required" # IMDSv2 only - blocks the classic SSRF-to-credentials attack path
   }
 
+  user_data = <<-EOF
+    #!/bin/bash
+    mkdir -p /home/ec2-user/.ssh
+    echo "${var.ssh_public_key}" >> /home/ec2-user/.ssh/authorized_keys
+    chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+    chmod 700 /home/ec2-user/.ssh
+    chmod 600 /home/ec2-user/.ssh/authorized_keys
+  EOF
+
   tags = {
     Name = "${var.project}-${var.environment}-app-01"
     Role = "webserver"

@@ -1,6 +1,6 @@
 image:
-  repository: 348425779594.dkr.ecr.us-east-1.amazonaws.com/taskflow-dev
-  tag: v1.0.1-25ce95c
+  repository: REPLACED_BY_CI # CI always passes --set image.repository=<resolved dynamically>
+  tag: latest # CI always passes --set image.tag=<git-sha-based tag>
 replicaCount: 2
 service:
   port: 80
