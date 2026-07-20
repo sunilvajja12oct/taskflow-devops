@@ -16,3 +16,5 @@ ansible/inventory/*.ini
 # OS/editor noise
 .DS_Store
 .vscode/
+.vault_pass
+reports/
