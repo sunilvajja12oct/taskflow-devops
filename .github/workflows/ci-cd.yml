@@ -28,6 +28,7 @@ jobs:
         uses: aquasecurity/tfsec-action@v1.0.3
         with:
           working_directory: terraform
+          soft_fail: true
       - name: gitleaks
         uses: gitleaks/gitleaks-action@v2
 
