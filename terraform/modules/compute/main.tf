@@ -45,13 +45,43 @@ resource "aws_instance" "app" {
     http_tokens = "required" # IMDSv2 only - blocks the classic SSRF-to-credentials attack path
   }
 
+  # First-boot bootstrap: SSH key + a working k3s/Helm node, so the CI
+  # deploy job never has to wait on a manual Ansible run to get a fresh
+  # instance ready. Ansible (roles: common-hardening, cloudwatch-agent,
+  # webserver) remains the path for everything that isn't on this
+  # critical path - run it by hand after boot for those.
   user_data = <<-EOF
     #!/bin/bash
+    set -e
     mkdir -p /home/ec2-user/.ssh
     echo "${var.ssh_public_key}" >> /home/ec2-user/.ssh/authorized_keys
     chown -R ec2-user:ec2-user /home/ec2-user/.ssh
     chmod 700 /home/ec2-user/.ssh
     chmod 600 /home/ec2-user/.ssh/authorized_keys
+
+    mkdir -p /opt/taskflow
+
+    if [ ! -f /usr/local/bin/k3s ]; then
+      curl -sfL https://get.k3s.io | sh -
+    fi
+
+    for i in $(seq 1 30); do
+      k3s kubectl get nodes 2>/dev/null | grep -q Ready && break
+      sleep 10
+    done
+
+    k3s kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml || true
+    k3s kubectl patch deployment metrics-server -n kube-system --type=json \
+      -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' || true
+
+    if [ ! -f /usr/local/bin/helm ]; then
+      curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    fi
+
+    mkdir -p /home/ec2-user/taskflow-chart
+    chown ec2-user:ec2-user /home/ec2-user/taskflow-chart
+
+    touch /opt/taskflow/bootstrap-complete
   EOF
 
   tags = {
@@ -60,10 +90,10 @@ resource "aws_instance" "app" {
   }
 }
 
-# Relay bucket for the Ansible aws_ssm connection plugin. Files are
-# deleted at the end of every playbook run - not a data store, and
-# deliberately left unversioned so nothing lingers if a run is
-# interrupted mid-transfer.
+# Relay bucket: CI syncs the Helm chart here after `apply`, and the
+# instance pulls from it in the `deploy` job (see aws_iam_role_policy
+# .ansible_transfer_read below) instead of depending on a manual Ansible
+# run to have copied the chart over. 1-day expiry - not a data store.
 resource "aws_s3_bucket" "ansible_transfer" {
   bucket = "${var.project}-${var.environment}-ansible-ssm-${data.aws_caller_identity.current.account_id}"
 }
@@ -90,4 +120,19 @@ resource "aws_s3_bucket_lifecycle_configuration" "ansible_transfer" {
 resource "aws_iam_role_policy_attachment" "ecr_readonly" {
   role       = aws_iam_role.ec2_ssm.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+# Lets the instance pull the Helm chart CI syncs into ansible_transfer,
+# so `deploy` doesn't depend on an Ansible run having copied it there.
+resource "aws_iam_role_policy" "ansible_transfer_read" {
+  name = "${var.project}-${var.environment}-ansible-transfer-read"
+  role = aws_iam_role.ec2_ssm.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:GetObject", "s3:ListBucket"]
+      Resource = [aws_s3_bucket.ansible_transfer.arn, "${aws_s3_bucket.ansible_transfer.arn}/*"]
+    }]
+  })
 }

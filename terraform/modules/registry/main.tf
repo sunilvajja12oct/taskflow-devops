@@ -6,6 +6,7 @@ variable "environment" {}
 resource "aws_ecr_repository" "app" {
   name                 = "${var.project}-${var.environment}"
   image_tag_mutability = "IMMUTABLE"
+  force_delete         = true # disposable dev infra - let destroy-all.sh remove a non-empty repo
 
   image_scanning_configuration {
     scan_on_push = true

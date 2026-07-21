@@ -21,7 +21,7 @@ jobs:
       account_id: ${{ steps.resolve.outputs.account_id }}
       ecr_repo: ${{ steps.resolve.outputs.ecr_repo }}
       state_bucket: ${{ steps.resolve.outputs.state_bucket }}
-      instance_id: ${{ steps.resolve.outputs.instance_id }}
+      ansible_bucket: ${{ steps.resolve.outputs.ansible_bucket }}
       ops_topic_arn: ${{ steps.resolve.outputs.ops_topic_arn }}
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
@@ -35,11 +35,14 @@ jobs:
           echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
           echo "ecr_repo=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/taskflow-dev" >> $GITHUB_OUTPUT
           echo "state_bucket=taskflow-tfstate-$ACCOUNT_ID" >> $GITHUB_OUTPUT
+          echo "ansible_bucket=taskflow-dev-ansible-ssm-$ACCOUNT_ID" >> $GITHUB_OUTPUT
           echo "ops_topic_arn=arn:aws:sns:$AWS_REGION:$ACCOUNT_ID:taskflow-dev-ops-alerts" >> $GITHUB_OUTPUT
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=taskflow-dev-app-01" "Name=instance-state-name,Values=running" \
-            --region $AWS_REGION --query "Reservations[].Instances[].InstanceId" --output text)
-          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          # Deliberately NOT resolving instance_id here: this job runs before
+          # `apply`, so on a from-scratch environment the instance doesn't
+          # exist yet and this would silently capture an empty ID that every
+          # later job would then be stuck with (GitHub Actions job outputs
+          # are fixed at job completion, never re-evaluated). Instance
+          # resolution happens in `bootstrap`, after `apply` has run.
 
   lint-scan:
     needs: resolve
@@ -107,6 +110,43 @@ jobs:
           terraform init -backend-config="bucket=${{ needs.resolve.outputs.state_bucket }}"
           terraform apply -var-file=dev.tfvars -auto-approve
 
+  bootstrap:
+    needs: [resolve, apply]
+    runs-on: ubuntu-latest
+    outputs:
+      instance_id: ${{ steps.resolve-instance.outputs.instance_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Resolve instance (post-apply, so a freshly created one is found)
+        id: resolve-instance
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=taskflow-dev-app-01" "Name=instance-state-name,Values=running" \
+            --region $AWS_REGION --query "Reservations[].Instances[].InstanceId" --output text)
+          if [ -z "$INSTANCE_ID" ] || [ "$(echo "$INSTANCE_ID" | wc -w)" -gt 1 ]; then
+            echo "::error::Expected exactly one running instance, got: '$INSTANCE_ID'"
+            exit 1
+          fi
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+      - name: Wait for SSM agent online
+        env:
+          INSTANCE_ID: ${{ steps.resolve-instance.outputs.instance_id }}
+        run: |
+          for i in $(seq 1 18); do
+            STATUS=$(aws ssm describe-instance-information --region $AWS_REGION \
+              --query "InstanceInformationList[?InstanceId=='$INSTANCE_ID'].PingStatus" --output text)
+            [ "$STATUS" == "Online" ] && exit 0
+            sleep 10
+          done
+          echo "::error::SSM agent on $INSTANCE_ID never came online"
+          exit 1
+      - name: Sync Helm chart to the relay bucket
+        run: aws s3 sync k8s/taskflow s3://${{ needs.resolve.outputs.ansible_bucket }}/chart --delete --region $AWS_REGION
+
   build-scan-push:
     needs: [resolve, apply]
     runs-on: ubuntu-latest
@@ -138,7 +178,7 @@ jobs:
           docker push $ECR_REPO:${{ steps.tag.outputs.tag }}
 
   deploy:
-    needs: [resolve, build-scan-push]
+    needs: [resolve, bootstrap, build-scan-push]
     runs-on: ubuntu-latest
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
@@ -147,19 +187,20 @@ jobs:
           aws-region: us-east-1
       - name: Deploy via SSM
         env:
-          INSTANCE_ID: ${{ needs.resolve.outputs.instance_id }}
+          INSTANCE_ID: ${{ needs.bootstrap.outputs.instance_id }}
           ECR_REPO: ${{ needs.resolve.outputs.ecr_repo }}
+          CHART_BUCKET: ${{ needs.resolve.outputs.ansible_bucket }}
         run: |
           CMD_ID=$(aws ssm send-command \
             --instance-ids $INSTANCE_ID \
             --document-name "AWS-RunShellScript" \
-            --parameters "commands=[\"export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && cd ~/taskflow-chart && helm upgrade --install taskflow . --set image.repository=$ECR_REPO --set image.tag=${{ needs.build-scan-push.outputs.image_tag }}\"]" \
+            --parameters "commands=[\"for i in \$(seq 1 30); do [ -f /opt/taskflow/bootstrap-complete ] && break; sleep 10; done\", \"aws s3 sync s3://$CHART_BUCKET/chart /home/ec2-user/taskflow-chart --delete\", \"export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && cd /home/ec2-user/taskflow-chart && helm upgrade --install taskflow . --set image.repository=$ECR_REPO --set image.tag=${{ needs.build-scan-push.outputs.image_tag }}\"]" \
             --region $AWS_REGION --query "Command.CommandId" --output text)
           sleep 20
           aws ssm get-command-invocation --instance-id $INSTANCE_ID --command-id $CMD_ID --region $AWS_REGION
 
   smoke-test:
-    needs: [resolve, deploy]
+    needs: [resolve, bootstrap, deploy]
     runs-on: ubuntu-latest
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
@@ -168,7 +209,7 @@ jobs:
           aws-region: us-east-1
       - name: Health check via SSM
         env:
-          INSTANCE_ID: ${{ needs.resolve.outputs.instance_id }}
+          INSTANCE_ID: ${{ needs.bootstrap.outputs.instance_id }}
         run: |
           CMD_ID=$(aws ssm send-command \
             --instance-ids $INSTANCE_ID \

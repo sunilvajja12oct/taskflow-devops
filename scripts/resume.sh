@@ -4,8 +4,18 @@ PROFILE=taskflow
 REGION=us-east-1
 
 echo "Fetching instance IDs..."
-APP_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=taskflow-dev-app-01" --profile $PROFILE --region $REGION --query "Reservations[].Instances[].InstanceId" --output text)
-NAT_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=taskflow-dev-nat" --profile $PROFILE --region $REGION --query "Reservations[].Instances[].InstanceId" --output text)
+STATE_FILTER="Name=instance-state-name,Values=running,pending,stopping,stopped"
+APP_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=taskflow-dev-app-01" "$STATE_FILTER" --profile $PROFILE --region $REGION --query "Reservations[].Instances[].InstanceId" --output text)
+NAT_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=taskflow-dev-nat" "$STATE_FILTER" --profile $PROFILE --region $REGION --query "Reservations[].Instances[].InstanceId" --output text)
+
+for pair in "app:$APP_ID" "nat:$NAT_ID"; do
+  name="${pair%%:*}"; id="${pair#*:}"
+  if [ "$(echo "$id" | wc -w)" -gt 1 ]; then
+    echo "Found more than one non-terminated $name instance: $id" >&2
+    echo "Resolve manually (terminate the stale one) before running resume.sh." >&2
+    exit 1
+  fi
+done
 
 echo "Starting NAT instance $NAT_ID..."
 aws ec2 start-instances --instance-ids $NAT_ID --profile $PROFILE --region $REGION > /dev/null
