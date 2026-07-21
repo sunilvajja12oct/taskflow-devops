@@ -194,10 +194,23 @@ jobs:
           CMD_ID=$(aws ssm send-command \
             --instance-ids $INSTANCE_ID \
             --document-name "AWS-RunShellScript" \
-            --parameters "commands=[\"for i in \$(seq 1 30); do [ -f /opt/taskflow/bootstrap-complete ] && break; sleep 10; done\", \"aws s3 sync s3://$CHART_BUCKET/chart /home/ec2-user/taskflow-chart --delete\", \"export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && cd /home/ec2-user/taskflow-chart && helm upgrade --install taskflow . --set image.repository=$ECR_REPO --set image.tag=${{ needs.build-scan-push.outputs.image_tag }}\"]" \
+            --parameters "commands=[\"for i in \$(seq 1 30); do [ -f /opt/taskflow/bootstrap-complete ] && break; sleep 10; done\", \"aws s3 sync s3://$CHART_BUCKET/chart /home/ec2-user/taskflow-chart --delete\", \"export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && kubectl create secret docker-registry ecr-pull-secret --docker-server=$ECR_REPO --docker-username=AWS --docker-password=\$(aws ecr get-login-password --region $AWS_REGION) --dry-run=client -o yaml | kubectl apply -f -\", \"export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && cd /home/ec2-user/taskflow-chart && helm upgrade --install taskflow . --set image.repository=$ECR_REPO --set image.tag=${{ needs.build-scan-push.outputs.image_tag }}\"]" \
             --region $AWS_REGION --query "Command.CommandId" --output text)
-          sleep 20
+          # Poll for a terminal status instead of a fixed sleep + unconditional
+          # success: get-command-invocation itself returns 0 even when the
+          # remote command failed, so without this check the step always
+          # reports green regardless of whether helm upgrade actually worked.
+          for i in $(seq 1 30); do
+            STATUS=$(aws ssm get-command-invocation --instance-id $INSTANCE_ID --command-id $CMD_ID --region $AWS_REGION --query "Status" --output text 2>/dev/null)
+            case "$STATUS" in
+              Success) echo "Deploy succeeded"; exit 0 ;;
+              Failed|Cancelled|TimedOut) break ;;
+            esac
+            sleep 10
+          done
+          echo "::error::Deploy did not succeed (status: $STATUS)"
           aws ssm get-command-invocation --instance-id $INSTANCE_ID --command-id $CMD_ID --region $AWS_REGION
+          exit 1
 
   smoke-test:
     needs: [resolve, bootstrap, deploy]
@@ -211,13 +224,27 @@ jobs:
         env:
           INSTANCE_ID: ${{ needs.bootstrap.outputs.instance_id }}
         run: |
-          CMD_ID=$(aws ssm send-command \
-            --instance-ids $INSTANCE_ID \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["curl -sf -H \"Host: taskflow.local\" http://localhost/health"]' \
-            --region $AWS_REGION --query "Command.CommandId" --output text)
-          sleep 10
-          aws ssm get-command-invocation --instance-id $INSTANCE_ID --command-id $CMD_ID --region $AWS_REGION --query "Status"
+          # Retries because a rolling update needs a few seconds for the new
+          # pod to pass its readiness probe. Each SSM command is one-shot, so
+          # a failed curl means re-sending, not re-polling the same command.
+          for i in $(seq 1 12); do
+            CMD_ID=$(aws ssm send-command \
+              --instance-ids $INSTANCE_ID \
+              --document-name "AWS-RunShellScript" \
+              --parameters 'commands=["curl -sf -H \"Host: taskflow.local\" http://localhost/health"]' \
+              --region $AWS_REGION --query "Command.CommandId" --output text)
+            sleep 8
+            STATUS=$(aws ssm get-command-invocation --instance-id $INSTANCE_ID --command-id $CMD_ID --region $AWS_REGION --query "Status" --output text 2>/dev/null)
+            if [ "$STATUS" == "Success" ]; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Attempt $i: status=$STATUS, retrying..."
+            sleep 7
+          done
+          echo "::error::Health check never succeeded after retries (last status: $STATUS)"
+          aws ssm get-command-invocation --instance-id $INSTANCE_ID --command-id $CMD_ID --region $AWS_REGION
+          exit 1
 
   notify:
     needs: [resolve, smoke-test]
