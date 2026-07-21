@@ -109,7 +109,8 @@ resource "aws_instance" "app" {
 # .ansible_transfer_read below) instead of depending on a manual Ansible
 # run to have copied the chart over. 1-day expiry - not a data store.
 resource "aws_s3_bucket" "ansible_transfer" {
-  bucket = "${var.project}-${var.environment}-ansible-ssm-${data.aws_caller_identity.current.account_id}"
+  bucket        = "${var.project}-${var.environment}-ansible-ssm-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true # CI writes the chart in here every deploy - destroy-all.sh needs to remove it non-empty
 }
 
 resource "aws_s3_bucket_public_access_block" "ansible_transfer" {
