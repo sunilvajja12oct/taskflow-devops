@@ -10,8 +10,9 @@ resource "aws_kms_alias" "secrets" {
 }
 
 resource "aws_secretsmanager_secret" "db_credentials" {
-  name       = "${var.project}/${var.environment}/db-credentials"
-  kms_key_id = aws_kms_key.secrets.arn
+  name                    = "${var.project}/${var.environment}/db-credentials"
+  kms_key_id              = aws_kms_key.secrets.arn
+  recovery_window_in_days = 0 # disposable dev infra - let destroy-all.sh -> up.sh recreate this immediately, no soft-delete window blocking the next apply
 }
 
 resource "aws_secretsmanager_secret_version" "db_credentials" {

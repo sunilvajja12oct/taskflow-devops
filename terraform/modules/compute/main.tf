@@ -61,9 +61,17 @@ resource "aws_instance" "app" {
 
     mkdir -p /opt/taskflow
 
-    if [ ! -f /usr/local/bin/k3s ]; then
-      curl -sfL https://get.k3s.io | sh -
-    fi
+    # Retry on the binary showing up, not curl's exit code: outbound
+    # internet through the NAT instance (a separate ASG created in the
+    # same apply) isn't always routable this early in boot, and a failed
+    # curl piped into `sh -`/`bash` still exits 0 - `sh` with no stdin is
+    # a no-op, not an error - so trusting the pipe's exit status would
+    # silently skip the install.
+    for i in $(seq 1 30); do
+      [ -f /usr/local/bin/k3s ] && break
+      curl -sfL https://get.k3s.io | sh - || true
+      sleep 10
+    done
 
     for i in $(seq 1 30); do
       k3s kubectl get nodes 2>/dev/null | grep -q Ready && break
@@ -74,14 +82,20 @@ resource "aws_instance" "app" {
     k3s kubectl patch deployment metrics-server -n kube-system --type=json \
       -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' || true
 
-    if [ ! -f /usr/local/bin/helm ]; then
-      curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-    fi
+    for i in $(seq 1 30); do
+      [ -f /usr/local/bin/helm ] && break
+      curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash || true
+      sleep 10
+    done
 
     mkdir -p /home/ec2-user/taskflow-chart
     chown ec2-user:ec2-user /home/ec2-user/taskflow-chart
 
-    touch /opt/taskflow/bootstrap-complete
+    # Only claim done once both binaries are actually there - CI's deploy
+    # job trusts this marker before running helm upgrade.
+    if [ -f /usr/local/bin/k3s ] && [ -f /usr/local/bin/helm ]; then
+      touch /opt/taskflow/bootstrap-complete
+    fi
   EOF
 
   tags = {
