@@ -19,9 +19,13 @@ spec:
           image: "{{ .Values.postgres.image }}"
           ports:
             - containerPort: 5432
-          envFrom:
-            - secretRef:
-                name: taskflow-db
+          # Deliberately no envFrom here (unlike the app deployment) - the
+          # taskflow-db secret's PGHOST points at this Service's own DNS
+          # name, and pg_isready respects PGHOST automatically. Pulling it
+          # in via envFrom made the readiness probe check the Service
+          # instead of localhost - which only routes to Ready pods, a
+          # deadlock this pod could never escape. Only the three POSTGRES_*
+          # vars the postgres image itself needs are set below.
           env:
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
