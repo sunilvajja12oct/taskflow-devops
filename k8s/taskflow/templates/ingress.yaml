@@ -15,3 +15,13 @@ spec:
                 name: taskflow
                 port:
                   number: {{ .Values.service.port }}
+    - host: {{ .Values.ingress.grafanaHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: taskflow-grafana
+                port:
+                  number: 3000

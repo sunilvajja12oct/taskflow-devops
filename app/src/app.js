@@ -1,11 +1,44 @@
 const express = require('express');
 const { Pool } = require('pg');
+const client = require('prom-client');
 
 const app = express();
 app.use(express.json());
 
 // Pool reads PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE from the environment.
 const pool = new Pool();
+
+client.collectDefaultMetrics();
+
+const httpRequestDuration = new client.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP request duration in seconds',
+  labelNames: ['method', 'route', 'status_code'],
+  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+});
+
+const httpRequestsTotal = new client.Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'route', 'status_code'],
+});
+
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    const route = req.route ? req.route.path : req.path;
+    const seconds = Number(process.hrtime.bigint() - start) / 1e9;
+    const labels = { method: req.method, route, status_code: res.statusCode };
+    httpRequestDuration.observe(labels, seconds);
+    httpRequestsTotal.inc(labels);
+  });
+  next();
+});
+
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', client.register.contentType);
+  res.end(await client.register.metrics());
+});
 
 async function waitForDb(retries = 20, delayMs = 3000) {
   for (let i = 0; i < retries; i++) {

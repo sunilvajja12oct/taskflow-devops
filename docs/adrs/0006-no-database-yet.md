@@ -1,41 +1,45 @@
-# ADR 0006: No database yet
+# ADR 0006: No database yet (superseded — resolved)
 
-**Status:** Accepted (open gap, not a deliberate final design)
+**Status:** Superseded. TaskFlow now runs a real, self-hosted Postgres pod
+(`k8s/taskflow/templates/postgres-*.yaml`); `app/src/app.js` uses a real `pg`
+client with a startup migration. Kept below for the historical record of why
+the gap existed and what closing it involved.
 
-## Context
+## Original context (as of the first pass)
 
 The original build plan specified a 3-tier app — task API + Postgres backend.
-What exists today (`app/src/app.js`) is a 2-tier app: an Express API holding
-tasks in a plain in-memory array (`let tasks = []`). Restarting the pod loses
-all data. Meanwhile, everything *around* where a database would sit was built
-as if one existed: a KMS-encrypted Secrets Manager secret named
+What existed at the time (`app/src/app.js`) was a 2-tier app: an Express API
+holding tasks in a plain in-memory array (`let tasks = []`). Restarting the
+pod lost all data. Meanwhile, everything *around* where a database would sit
+was built as if one existed: a KMS-encrypted Secrets Manager secret named
 `taskflow/dev/db-credentials`, a 30-day rotation Lambda, a rotation-failure
-alert path — all live, all pointed at credentials nothing currently reads.
+alert path — all live, all pointed at credentials nothing read yet.
 
-## Decision
+## What closing the gap actually took
 
-Ship without a database for now. Document the gap explicitly rather than let it
-sit silently, since it's the single largest deviation from the original design.
+Turned out to be more than "add a client" — two real bugs only surfaced by
+running it:
+
+1. The Postgres pod's readiness probe deadlocked against its own Kubernetes
+   Service (see the postmortem) - `envFrom` pulled in `PGHOST` meant for the
+   *app*, and `pg_isready` used it instead of checking localhost.
+2. Wiring the credentials in required refactoring the CI deploy step out of
+   an inline SSM JSON string into a real script
+   (`scripts/ci/deploy-remote.sh`), which also now fetches the secret
+   directly on the instance - no plaintext credential passes through a
+   GitHub Actions log.
 
 ## Consequences
 
-- The app has no state to lose, back up, or restore — which is also why
-  [Phase 9 (DR)](../postmortems/) has nothing real to drill yet: a restore drill
-  needs something worth restoring.
-- The secrets/rotation infrastructure (ADR 0005) is fully built and tested at
-  the AWS level but not yet exercised end-to-end by a real consumer — the
-  rotation Lambda has never had its output actually read by a running database
-  connection.
-- Adding a real database later is mostly additive, not a redesign: an
-  `aws_db_instance` (or a Postgres pod + PVC) in `terraform/modules`, wiring
-  `SecretsManager` values into the app's environment via the existing
-  `taskflow-config` ConfigMap pattern, and switching `app/src/app.js`'s
-  in-memory array for a real client.
+- The secrets/rotation infrastructure (ADR 0005) is now actually exercised by
+  a real consumer for the first time.
+- [Phase 9 (DR)](../postmortems/) now has something real to restore - a
+  `pg_dump`-to-S3 backup path and restore drill became meaningful.
+- Single-user rotation (ADR 0005) is worth revisiting now that a live
+  connection pool exists to potentially disrupt mid-rotation.
 
 ## Alternatives considered
 
-- **Build RDS now** — deferred by explicit scope decision (see the
-  [status/mind-map artifact](../diagrams/architecture.md)) in favor of finishing
-  the documentation and process gaps (Phase 11) first, since those apply to
-  everything already built and don't cost anything further from the $130
-  credit.
+- **RDS instead of a self-hosted pod** — rejected on cost: RDS bills
+  continuously; a pod on the existing instance doesn't add a cent, matching
+  every other cost call in this project (NAT instance, self-managed k3s).

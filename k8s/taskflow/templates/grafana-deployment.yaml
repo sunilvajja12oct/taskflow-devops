@@ -1,0 +1,64 @@
+# Anonymous Viewer access is enabled deliberately: this cluster has no public
+# ingress (Traefik is only reachable from inside the VPC/instance), so there's
+# no internet-facing exposure to protect against here. Admin login (default
+# admin/admin - change on first login if this ever becomes reachable beyond
+# this dev box) still works for editing dashboards/datasources.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taskflow-grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: taskflow-grafana
+  template:
+    metadata:
+      labels:
+        app: taskflow-grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.0
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: datasource-provisioning
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provisioning
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: datasource-provisioning
+          configMap:
+            name: taskflow-grafana-provisioning
+            items:
+              - key: datasource.yaml
+                path: datasource.yaml
+        - name: dashboard-provisioning
+          configMap:
+            name: taskflow-grafana-provisioning
+            items:
+              - key: dashboards.yaml
+                path: dashboards.yaml
+        - name: dashboards
+          configMap:
+            name: taskflow-grafana-dashboards

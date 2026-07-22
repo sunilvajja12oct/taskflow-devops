@@ -7,11 +7,14 @@ around it is the point.
 
 ## What it is
 
-- `GET /health`, `GET /tasks`, `POST /tasks`, `PATCH /tasks/:id`
-- In-memory store — no database yet (see [ADR 0006](docs/adrs/0006-no-database-yet.md))
+- `GET /health`, `GET /tasks`, `POST /tasks`, `PATCH /tasks/:id`, `GET /metrics`
+- Real Postgres backend, self-hosted as a pod in k3s (see [ADR 0006](docs/adrs/0006-no-database-yet.md), now resolved)
 - Packaged as a multi-stage, distroless, non-root Docker image
 - Runs as 2 replicas behind an Ingress on a single-node k3s cluster, with an HPA
   scaling 2→4 on CPU
+- Self-hosted Prometheus + Grafana scraping the app's own metrics — request
+  rate, error rate, p95 latency — with real alert rules against the
+  [SLOs](docs/runbooks/slos.md) (see [ADR 0007](docs/adrs/0007-self-hosted-prometheus-grafana.md))
 
 ## Architecture
 
