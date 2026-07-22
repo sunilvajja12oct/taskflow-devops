@@ -1,8 +1,8 @@
 #!/bin/bash
 # Runs on the app instance via SSM, invoked by the `deploy` CI job.
-# Expects ECR_REPO, IMAGE_TAG, AWS_REGION in the environment.
+# Expects ECR_REPO, IMAGE_TAG, AWS_REGION, CHART_BUCKET in the environment.
 set -euo pipefail
-: "${ECR_REPO:?}" "${IMAGE_TAG:?}" "${AWS_REGION:?}"
+: "${ECR_REPO:?}" "${IMAGE_TAG:?}" "${AWS_REGION:?}" "${CHART_BUCKET:?}"
 
 for i in $(seq 1 30); do
   [ -f /opt/taskflow/bootstrap-complete ] && break
@@ -32,4 +32,7 @@ kubectl create secret generic taskflow-db \
   --dry-run=client -o yaml | kubectl apply -f -
 
 cd /home/ec2-user/taskflow-chart
-helm upgrade --install taskflow . --set image.repository="$ECR_REPO" --set image.tag="$IMAGE_TAG"
+helm upgrade --install taskflow . \
+  --set image.repository="$ECR_REPO" \
+  --set image.tag="$IMAGE_TAG" \
+  --set backupBucket="$CHART_BUCKET"
