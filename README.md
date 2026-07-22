@@ -8,6 +8,8 @@ around it is the point.
 ## What it is
 
 - `GET /health`, `GET /tasks`, `POST /tasks`, `PATCH /tasks/:id`, `GET /metrics`
+- `GET /contact`, `POST /contact`, `GET /contact/submissions` — a simple HTML intake
+  form (name/email/purpose) backed by its own Postgres table
 - Real Postgres backend, self-hosted as a pod in k3s (see [ADR 0006](docs/adrs/0006-no-database-yet.md), now resolved)
 - Packaged as a multi-stage, distroless, non-root Docker image
 - Runs as 2 replicas behind an Ingress on a single-node k3s cluster, with an HPA
