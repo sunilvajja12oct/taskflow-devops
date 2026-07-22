@@ -151,3 +151,26 @@ resource "aws_iam_role_policy" "ansible_transfer_read" {
     }]
   })
 }
+
+# Lets deploy-remote.sh (run on this instance via SSM) fetch the DB
+# credentials directly, the same way it fetches an ECR token - no plaintext
+# secret ever passes through the CI runner or a GitHub Actions log.
+resource "aws_iam_role_policy" "db_secret_read" {
+  name = "${var.project}-${var.environment}-db-secret-read"
+  role = aws_iam_role.ec2_ssm.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = var.db_secret_arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = var.db_secret_kms_key_arn
+      }
+    ]
+  })
+}

@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taskflow-postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # single ReadWriteOnce PVC - never run two Postgres pods at once
+  selector:
+    matchLabels:
+      app: taskflow-postgres
+  template:
+    metadata:
+      labels:
+        app: taskflow-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: "{{ .Values.postgres.image }}"
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: taskflow-db
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: taskflow-db, key: PGUSER }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: taskflow-db, key: PGPASSWORD }
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef: { name: taskflow-db, key: PGDATABASE }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: taskflow-postgres-data

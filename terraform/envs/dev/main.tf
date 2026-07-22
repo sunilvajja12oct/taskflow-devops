@@ -14,12 +14,14 @@ module "compute" {
   ssh_public_key = var.ssh_public_key_override != "" ? var.ssh_public_key_override : file(pathexpand("~/.ssh/taskflow-ansible.pub"))
   source         = "../../modules/compute"
 
-  vpc_id              = module.network.vpc_id
-  private_subnet_ids  = module.network.private_subnet_ids
-  security_group_id   = module.network.private_instances_sg_id
-  environment         = var.environment
-  project             = "taskflow"
-  alarm_sns_topic_arn = module.secrets.ops_alerts_topic_arn
+  vpc_id                = module.network.vpc_id
+  private_subnet_ids    = module.network.private_subnet_ids
+  security_group_id     = module.network.private_instances_sg_id
+  environment           = var.environment
+  project               = "taskflow"
+  alarm_sns_topic_arn   = module.secrets.ops_alerts_topic_arn
+  db_secret_arn         = module.secrets.secret_arn
+  db_secret_kms_key_arn = module.secrets.kms_key_arn
 }
 
 module "secrets" {

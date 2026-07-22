@@ -5,3 +5,19 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
+      - PGHOST=db
+      - PGPORT=5432
+      - PGUSER=taskflow_app
+      - PGPASSWORD=localdev
+      - PGDATABASE=taskflow
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=taskflow_app
+      - POSTGRES_PASSWORD=localdev
+      - POSTGRES_DB=taskflow
+    ports:
+      - "5432:5432"

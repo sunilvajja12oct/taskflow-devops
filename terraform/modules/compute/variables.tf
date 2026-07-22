@@ -29,3 +29,13 @@ variable "ssh_public_key" {
   description = "SSH public key auto-injected into ec2-user's authorized_keys at launch"
   type        = string
 }
+
+variable "db_secret_arn" {
+  description = "ARN of the Secrets Manager secret the instance reads DB credentials from at deploy time"
+  type        = string
+}
+
+variable "db_secret_kms_key_arn" {
+  description = "KMS key ARN protecting db_secret_arn, needed for kms:Decrypt"
+  type        = string
+}
