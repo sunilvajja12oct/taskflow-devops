@@ -208,7 +208,7 @@ jobs:
           CMD_ID=$(aws ssm send-command \
             --instance-ids $INSTANCE_ID \
             --document-name "AWS-RunShellScript" \
-            --parameters "commands=[\"aws s3 sync s3://$CHART_BUCKET/chart /home/ec2-user/taskflow-chart --delete\", \"aws s3 cp s3://$CHART_BUCKET/deploy-remote.sh /tmp/deploy-remote.sh && chmod +x /tmp/deploy-remote.sh\", \"ECR_REPO=$ECR_REPO IMAGE_TAG=$IMAGE_TAG AWS_REGION=$AWS_REGION /tmp/deploy-remote.sh\"]" \
+            --parameters "commands=[\"aws s3 sync s3://$CHART_BUCKET/chart /home/ec2-user/taskflow-chart --delete\", \"aws s3 cp s3://$CHART_BUCKET/deploy-remote.sh /tmp/deploy-remote.sh && chmod +x /tmp/deploy-remote.sh\", \"ECR_REPO=$ECR_REPO IMAGE_TAG=$IMAGE_TAG AWS_REGION=$AWS_REGION CHART_BUCKET=$CHART_BUCKET /tmp/deploy-remote.sh\"]" \
             --region $AWS_REGION --query "Command.CommandId" --output text)
           # Poll for a terminal status instead of a fixed sleep + unconditional
           # success: get-command-invocation itself returns 0 even when the

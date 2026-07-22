@@ -1,0 +1,43 @@
+# DR backup: daily pg_dump to S3. See docs/runbooks/disaster-recovery.md.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: taskflow-postgres-backup
+spec:
+  schedule: "0 8 * * *" # 08:00 UTC daily
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pg-dump-to-s3
+              image: postgres:16-alpine
+              envFrom:
+                - secretRef:
+                    name: taskflow-db
+              env:
+                - name: BUCKET
+                  value: {{ .Values.backupBucket | quote }}
+                - name: AWS_REGION
+                  value: us-east-1
+              command:
+                - sh
+                - -c
+                - |
+                  set -euo pipefail
+                  apk add --no-cache aws-cli >/dev/null
+                  TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                  PGPASSWORD="$PGPASSWORD" pg_dump -h "$PGHOST" -U "$PGUSER" "$PGDATABASE" > /tmp/backup.sql
+                  aws s3 cp /tmp/backup.sql "s3://$BUCKET/backups/taskflow-$TIMESTAMP.sql" --region "$AWS_REGION"
+                  echo "Backup uploaded: taskflow-$TIMESTAMP.sql"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 300m
+                  memory: 256Mi

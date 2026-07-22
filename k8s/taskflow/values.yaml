@@ -15,3 +15,4 @@ hpa:
 postgres:
   image: postgres:16-alpine
   storage: 1Gi
+backupBucket: REPLACED_BY_CI # CI always passes --set backupBucket=<the ansible_transfer relay bucket>, reused for backups/

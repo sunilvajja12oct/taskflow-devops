@@ -42,7 +42,8 @@ resource "aws_instance" "app" {
   iam_instance_profile   = aws_iam_instance_profile.ec2_ssm.name
 
   metadata_options {
-    http_tokens = "required" # IMDSv2 only - blocks the classic SSRF-to-credentials attack path
+    http_tokens                 = "required" # IMDSv2 only - blocks the classic SSRF-to-credentials attack path
+    http_put_response_hop_limit = 2          # 1 wouldn't reach IMDS from inside a pod's network namespace - the backup CronJob needs this to assume the instance role
   }
 
   # First-boot bootstrap: SSH key + a working k3s/Helm node, so the CI
@@ -126,9 +127,21 @@ resource "aws_s3_bucket_lifecycle_configuration" "ansible_transfer" {
   rule {
     id     = "expire-transfer-files"
     status = "Enabled"
-    filter {}
+    filter {
+      prefix = "chart/"
+    }
     expiration {
       days = 1
+    }
+  }
+  rule {
+    id     = "expire-old-backups"
+    status = "Enabled"
+    filter {
+      prefix = "backups/"
+    }
+    expiration {
+      days = 14 # DR retention window - see docs/runbooks/disaster-recovery.md
     }
   }
 }
@@ -144,11 +157,20 @@ resource "aws_iam_role_policy" "ansible_transfer_read" {
   role = aws_iam_role.ec2_ssm.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["s3:GetObject", "s3:ListBucket"]
-      Resource = [aws_s3_bucket.ansible_transfer.arn, "${aws_s3_bucket.ansible_transfer.arn}/*"]
-    }]
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:ListBucket"]
+        Resource = [aws_s3_bucket.ansible_transfer.arn, "${aws_s3_bucket.ansible_transfer.arn}/*"]
+      },
+      {
+        # Scoped to backups/* only - the pg_dump CronJob writes here via the
+        # instance role (IMDS, hop_limit=2 above), no separate credentials.
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = "${aws_s3_bucket.ansible_transfer.arn}/backups/*"
+      }
+    ]
   })
 }
 
