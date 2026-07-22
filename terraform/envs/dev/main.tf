@@ -42,3 +42,9 @@ module "cicd" {
   environment = var.environment
   github_repo = "sunilvajja12oct/taskflow-devops"
 }
+
+module "auto_stop" {
+  source      = "../../modules/auto_stop"
+  environment = var.environment
+  project     = "taskflow"
+}
