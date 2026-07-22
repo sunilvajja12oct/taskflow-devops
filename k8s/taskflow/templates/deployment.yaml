@@ -22,6 +22,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: taskflow-config
+            - secretRef:
+                name: taskflow-db
           livenessProbe:
             httpGet:
               path: /health
