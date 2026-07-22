@@ -49,6 +49,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks-action diffs base..head commits; a shallow clone doesn't have the base
       - uses: hashicorp/setup-terraform@v3
       - name: terraform fmt check
         run: terraform -chdir=terraform/envs/dev fmt -check -recursive
