@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: taskflow-prometheus
+spec:
+  selector:
+    app: taskflow-prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
